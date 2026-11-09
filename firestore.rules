@@ -57,6 +57,22 @@ service cloud.firestore {
     match /clientes/{id} { allow read, write: if isStaff(); }
     match /solicitudes/{id} { allow read, write: if isStaff(); }
 
+    // Bandeja de cambios de Claude: se puede dejar un cambio (sin leer nada);
+    // solo un administrador lo ve, lo aplica o lo descarta.
+    match /bandeja/{id} {
+      allow create: if request.resource.data.keys().hasOnly(['creado', 'resumen', 'ops', 'estado', 'origen'])
+        && request.resource.data.estado == 'pendiente'
+        && request.resource.data.resumen is string && request.resource.data.resumen.size() < 4000
+        && request.resource.data.ops is list && request.resource.data.ops.size() > 0 && request.resource.data.ops.size() <= 60;
+      allow read, update, delete: if isAdmin();
+    }
+    // Aviso sin contenido para el recordatorio diario (solo la fecha).
+    match /bandeja_avisos/{id} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasOnly(['creado']) && request.resource.data.creado is string;
+      allow delete: if isAdmin();
+    }
+
     // Todo lo demás queda cerrado
     match /{document=**} {
       allow read, write: if false;

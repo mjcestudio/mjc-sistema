@@ -272,6 +272,95 @@
   });
   function toast(t) { const d = document.createElement("div"); d.className = "toast"; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 2800); }
 
+  /* ---------- Bandeja de cambios de Claude ----------
+     Claude deja aquí los gastos, precios y ajustes que el usuario le dicta en el chat.
+     Nada se guarda en los datos reales hasta que un administrador lo revisa y toca «Aplicar». */
+  const BCSS = `.bj-pill{position:fixed;right:18px;top:calc(env(safe-area-inset-top,0px) + 14px);z-index:31;display:flex;align-items:center;gap:8px;background:var(--wine,#5A1F26);color:#fff;border:0;border-radius:999px;padding:10px 16px;font:inherit;font-weight:700;font-size:13.5px;cursor:pointer;box-shadow:0 8px 24px rgba(46,43,39,.18)}
+  .bj-pill:focus-visible{outline:2px solid var(--ink,#2E2B27);outline-offset:3px}
+  .bj-item{border:1px solid var(--line,#DDD3C5);border-radius:18px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;background:var(--surface,#FBF8F4)}
+  .bj-item h3{font-family:var(--body,system-ui);font-size:15px;font-weight:700;margin:0}
+  .bj-res{white-space:pre-wrap;font-size:14px;margin:0}
+  .bj-ops{margin:0;padding-left:18px;font-size:13px;color:var(--muted,#6E675C);display:flex;flex-direction:column;gap:4px}
+  .bj-ops b{color:var(--ink,#2E2B27);font-weight:600}
+  .bj-acts{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+  @media (max-width:860px){.bj-pill{right:12px;padding:8px 13px;font-size:12.5px}}`;
+  const bst = document.createElement("style"); bst.textContent = BCSS; document.head.appendChild(bst);
+  let bj = [], bjOpen = false;
+  // Solo estas rutas se pueden tocar desde la bandeja.
+  const ADD_OK = ["fin/admin/gastos", "fin/admin/pmovs", "movimientos"];
+  const DOC_OK = /^(productos|existencias|fin\/admin\/costos|fin\/admin\/proveedores|fin\/admin\/proyectos|fin\/admin\/empleados)\/[A-Za-z0-9_.\-]+$/;
+  const opOk = o => o && ((o.op === "add" && ADD_OK.includes(o.path)) || ((o.op === "set" || o.op === "update") && DOC_OK.test(o.path || ""))) && o.data && typeof o.data === "object";
+  const MXN = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" });
+  const NAMES = { "fin/admin/gastos": "Gasto", "fin/admin/pmovs": "Movimiento de proyecto", "movimientos": "Movimiento de inventario", productos: "Producto", existencias: "Existencia", "fin/admin/costos": "Costo", "fin/admin/proveedores": "Proveedor", "fin/admin/proyectos": "Proyecto", "fin/admin/empleados": "Empleado" };
+  const SKIP = new Set(["creado", "actualizado", "por", "mes"]);
+  function opLine(o) {
+    const base = o.op === "add" ? o.path : o.path.replace(/\/[^/]+$/, ""), id = o.op === "add" ? "" : o.path.split("/").pop();
+    const verb = o.op === "add" ? "Nuevo" : o.op === "set" ? "Guardar" : "Cambiar";
+    const fields = Object.entries(o.data).filter(([k]) => !SKIP.has(k)).map(([k, v]) => `${k}: ${k === "monto" || k === "precio" || k === "costo" ? MXN.format(+v || 0) : typeof v === "object" ? JSON.stringify(v) : v}`).join(" · ");
+    return `<li><b>${verb} ${esc((NAMES[base] || base).toLowerCase())}${id ? " " + esc(id) : ""}</b> — ${esc(fields)}${opOk(o) ? "" : ' <span class="pill out">No permitido</span>'}</li>`;
+  }
+  function renderBj() {
+    let pill = $("#bjPill");
+    if (!bj.length) { if (pill) pill.remove(); if (bjOpen) closeBj(); return; }
+    if (!pill) { pill = document.createElement("button"); pill.id = "bjPill"; pill.className = "bj-pill"; pill.type = "button"; pill.dataset.bjopen = "1"; document.body.appendChild(pill); }
+    pill.textContent = `Cambios de Claude por aplicar · ${bj.length}`;
+    if (bjOpen) drawBj();
+  }
+  function drawBj() {
+    const layer = $("#bjLayer") || Object.assign(document.createElement("div"), { id: "bjLayer" });
+    if (!layer.isConnected) document.body.appendChild(layer);
+    layer.innerHTML = `<div class="scrim" data-bjclose><div class="drawer" role="dialog" aria-modal="true" aria-label="Cambios de Claude">
+      <div class="dh"><h2>Cambios de Claude</h2><button type="button" class="x" data-bjclose aria-label="Cerrar">×</button></div>
+      <p class="sub" style="margin:0">Lo que le dictaste a Claude en el chat. Revisa y aplica; nada se guarda hasta que tocas «Aplicar».</p>
+      ${bj.length > 1 ? `<button class="btn primary block" type="button" data-bjall>Aplicar todo (${bj.length})</button>` : ""}
+      ${bj.map(x => `<article class="bj-item"><h3>${esc(new Date(x.creado || Date.now()).toLocaleString("es-MX", { timeZone: "America/Mexico_City", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}</h3>
+        <p class="bj-res">${esc(x.resumen || "")}</p>
+        <details><summary class="sub" style="cursor:pointer">Ver detalle (${(x.ops || []).length})</summary><ul class="bj-ops">${(x.ops || []).map(opLine).join("")}</ul></details>
+        <div class="bj-acts"><button class="btn sm danger" type="button" data-bjdel="${esc(x.id)}">Descartar</button>${(x.ops || []).every(opOk) ? `<button class="btn sm primary" type="button" data-bjok="${esc(x.id)}">Aplicar</button>` : '<span class="sub" style="align-self:center">Contiene cambios no permitidos</span>'}</div></article>`).join("")}
+    </div></div>`;
+  }
+  function closeBj() { bjOpen = false; const l = $("#bjLayer"); if (l) l.innerHTML = ""; }
+  const stamp = v => v === "__now__" ? new Date().toISOString() : v === "__uid__" ? (auth.currentUser || {}).uid || "" : v;
+  async function applyBj(x) {
+    const ops = x.ops || [];
+    if (!ops.length || !ops.every(opOk)) throw Object.assign(new Error("op"), { code: "op-no-permitida" });
+    const b = fs.batch(), now = new Date().toISOString(), uid = (auth.currentUser || {}).uid || "";
+    for (const o of ops) {
+      const d = {}; for (const [k, v] of Object.entries(o.data)) d[k] = stamp(v);
+      if (o.op === "add") { b.set(fs.collection(o.path).doc(), { creado: now, por: uid, ...d }); }
+      else if (o.op === "set") b.set(fs.doc(o.path), { actualizado: now, ...d }, { merge: true });
+      else b.update(fs.doc(o.path), { ...d, actualizado: now });
+    }
+    b.update(fs.doc("bandeja/" + x.id), { estado: "aplicado", aplicado: now, aplicadoPor: uid });
+    b.delete(fs.doc("bandeja_avisos/" + x.id));
+    await b.commit();
+  }
+  document.addEventListener("click", async e => {
+    const t = e.target;
+    if (t.closest("[data-bjopen]")) { bjOpen = true; drawBj(); return; }
+    if (t.matches("[data-bjclose]")) { closeBj(); return; }
+    const ok = t.closest("[data-bjok]"), del = t.closest("[data-bjdel]"), all = t.closest("[data-bjall]");
+    if (ok || all) {
+      const list = (ok ? bj.filter(x => x.id === ok.dataset.bjok) : bj.slice()).filter(x => (x.ops || []).every(opOk));
+      (ok || all).disabled = true; let n = 0, bad = 0;
+      for (const x of list) { try { await applyBj(x); n++; } catch (err) { console.error(err); bad++; } }
+      toast(bad ? `${n} aplicados · ${bad} no se pudieron aplicar` : n === 1 ? "Cambio aplicado" : `${n} cambios aplicados`);
+      if (all || ok) { const b2 = t.closest("button"); if (b2) b2.disabled = false; }
+      return;
+    }
+    if (del) {
+      if (!confirm("¿Descartar este cambio? No se guardará nada.")) return;
+      try { const b = fs.batch(); b.update(fs.doc("bandeja/" + del.dataset.bjdel), { estado: "descartado", aplicado: new Date().toISOString() }); b.delete(fs.doc("bandeja_avisos/" + del.dataset.bjdel)); await b.commit(); toast("Cambio descartado"); } catch (err) { toast(errMsg(err)); }
+    }
+  });
+  ready.then(() => {
+    if (!FB.perfil || FB.perfil.rol !== "admin") return;
+    fs.collection("bandeja").where("estado", "==", "pendiente").limit(100).onSnapshot(s => {
+      bj = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => String(a.creado).localeCompare(String(b.creado)));
+      renderBj();
+    }, err => console.error(err));
+  });
+
   /* ---------- Ajustes: importar respaldo (.zip) ---------- */
   let zipMsg = "", zipBusy = false;
   function renderImport() {
