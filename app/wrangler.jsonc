@@ -1,0 +1,6 @@
+// App interna MJC Showroom · se publica en app.mjcestudio.com.mx
+{
+  "name": "mjc-showroom",
+  "compatibility_date": "2026-11-01",
+  "assets": { "directory": "./public", "not_found_handling": "single-page-application" }
+}

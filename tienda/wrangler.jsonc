@@ -1,0 +1,6 @@
+// Tienda pública MJC Estudio · se publica en www.mjcestudio.com.mx y mjcestudio.com.mx
+{
+  "name": "mjc-tienda",
+  "compatibility_date": "2026-11-01",
+  "assets": { "directory": "./public", "not_found_handling": "404-page" }
+}

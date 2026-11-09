@@ -1,0 +1,65 @@
+rules_version = '2';
+// Reglas de seguridad · MJC Showroom
+// Administrador: ve y edita todo. Vendedor: vende, ve catálogo y existencias;
+// no ve ni toca costos, proveedores, finanzas ni usuarios.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isOwner() {
+      return signedIn() && request.auth.token.email != null
+        && request.auth.token.email.lower() in ['mjc.estudioarq@gmail.com'];
+    }
+    function perfil() { return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data; }
+    function hasPerfil() { return signedIn() && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)); }
+    function isAdmin() { return isOwner() || (hasPerfil() && perfil().activo != false && perfil().rol == 'admin'); }
+    function isStaff() { return isOwner() || (hasPerfil() && perfil().activo != false && perfil().rol in ['admin', 'vendedor']); }
+
+    // Cuentas del equipo
+    match /usuarios/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // Finanzas, costos, proveedores, comisiones, proyectos: solo administradores
+    match /fin/{rest=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // Catálogo: todo el equipo lo ve; solo administradores lo cambian
+    match /productos/{id} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+    match /config/{id} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+    match /colaboradores/{id} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    // Fotos (imagen completa y miniatura)
+    match /fotos/{id} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+    match /miniaturas/{id} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    // Operación diaria: existencias, ventas, movimientos, clientes, solicitudes
+    match /existencias/{id} { allow read, write: if isStaff(); }
+    match /ventas/{id} { allow read, write: if isStaff(); }
+    match /movimientos/{id} { allow read, write: if isStaff(); }
+    match /clientes/{id} { allow read, write: if isStaff(); }
+    match /solicitudes/{id} { allow read, write: if isStaff(); }
+
+    // Todo lo demás queda cerrado
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
