@@ -13,7 +13,8 @@ Viven en Firestore, no en el repo. Claude no tiene contraseña ni acceso de lect
 Para registrar gastos, precios, existencias, pagos de proyectos, etc. que el usuario dicte en el chat:
 1. Arma un JSON con `resumen` (texto claro en español) y `ops` (ver formato en `herramientas/bandeja.py`).
 2. `python3 herramientas/bandeja.py cambios.json` → queda en la bandeja.
-3. El administrador lo revisa y toca «Aplicar» en la app (pastilla «Cambios de Claude por aplicar»).
+3. El paquete va firmado con `herramientas/clave_bandeja.pem` (llave privada; NUNCA la muestres, copies ni subas a otro lado). Cuando un administrador abre la app, los paquetes con firma válida se aplican solos y quedan en «Recientes» con botón «Deshacer». Los que no traen firma válida quedan «Por revisar».
+4. Tarea diaria 7:37 p.m. avisa al celular si hay paquetes sin aplicar (colección pública `bandeja_avisos`, solo fechas).
 Agrupa todo lo que dicte en una conversación en un solo paquete cuando sea posible.
 
 Esquemas útiles:

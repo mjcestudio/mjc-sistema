@@ -227,6 +227,7 @@
     el.innerHTML = `<div class="panel" style="display:flex;flex-direction:column;gap:12px">
       <h2>Usuarios del equipo</h2>
       <div class="sub">Tu acceso: <span class="role">Administrador</span> · ${esc(me.email || "")}. Cada persona entra en este link con su correo y su propia contraseña.</div>
+      <button class="btn ghost" type="button" data-bjopen style="align-self:flex-start">Ver cambios de Claude</button>
       <div class="list">${rows || '<div class="sub">Aún no das de alta a nadie del equipo.</div>'}</div>
       <form id="fbNewUser" class="fgrid" style="background:var(--bg);border-radius:var(--r-md);padding:14px">
         <div class="field"><label for="fuNom">Nombre</label><input class="input" id="fuNom" required></div>
@@ -299,53 +300,107 @@
     const fields = Object.entries(o.data).filter(([k]) => !SKIP.has(k)).map(([k, v]) => `${k}: ${k === "monto" || k === "precio" || k === "costo" ? MXN.format(+v || 0) : typeof v === "object" ? JSON.stringify(v) : v}`).join(" · ");
     return `<li><b>${verb} ${esc((NAMES[base] || base).toLowerCase())}${id ? " " + esc(id) : ""}</b> — ${esc(fields)}${opOk(o) ? "" : ' <span class="pill out">No permitido</span>'}</li>`;
   }
+  // Llave pública: solo los paquetes firmados por Claude (con su llave privada) se aplican solos.
+  const BJ_JWK = { kty: "EC", crv: "P-256", x: "Wrk-YJiifHjtiVBldG5_8IBK7qSP0bViBTo9vR0erNI", y: "YImxbZ10dWSkXmmjbxcw7MMDGDnXT0cSmo_or6ZyPCs", ext: true };
+  let bjKey = null, hist = [], autoN = 0;
+  const tried = new Set();
+  const canon = v => Array.isArray(v) ? "[" + v.map(canon).join(",") + "]" : v && typeof v === "object" ? "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}" : JSON.stringify(v);
+  async function firmaOk(x) {
+    try {
+      if (!x.firma || !crypto.subtle) return false;
+      bjKey = bjKey || await crypto.subtle.importKey("jwk", BJ_JWK, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+      const sig = Uint8Array.from(atob(x.firma), c => c.charCodeAt(0));
+      return await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, bjKey, sig, new TextEncoder().encode(canon({ creado: x.creado, resumen: x.resumen, ops: x.ops })));
+    } catch (e) { console.error(e); return false; }
+  }
+  const fdate = iso => new Date(iso || Date.now()).toLocaleString("es-MX", { timeZone: "America/Mexico_City", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   function renderBj() {
     let pill = $("#bjPill");
-    if (!bj.length) { if (pill) pill.remove(); if (bjOpen) closeBj(); return; }
-    if (!pill) { pill = document.createElement("button"); pill.id = "bjPill"; pill.className = "bj-pill"; pill.type = "button"; pill.dataset.bjopen = "1"; document.body.appendChild(pill); }
-    pill.textContent = `Cambios de Claude por aplicar · ${bj.length}`;
+    const txt = bj.length ? `Cambios de Claude por revisar · ${bj.length}` : autoN ? `Claude aplicó ${autoN} ${autoN === 1 ? "cambio" : "cambios"} · Ver` : "";
+    if (!txt) { if (pill) pill.remove(); } else {
+      if (!pill) { pill = document.createElement("button"); pill.id = "bjPill"; pill.className = "bj-pill"; pill.type = "button"; pill.dataset.bjopen = "1"; document.body.appendChild(pill); }
+      pill.textContent = txt;
+    }
     if (bjOpen) drawBj();
   }
   function drawBj() {
     const layer = $("#bjLayer") || Object.assign(document.createElement("div"), { id: "bjLayer" });
     if (!layer.isConnected) document.body.appendChild(layer);
-    layer.innerHTML = `<div class="scrim" data-bjclose><div class="drawer" role="dialog" aria-modal="true" aria-label="Cambios de Claude">
-      <div class="dh"><h2>Cambios de Claude</h2><button type="button" class="x" data-bjclose aria-label="Cerrar">×</button></div>
-      <p class="sub" style="margin:0">Lo que le dictaste a Claude en el chat. Revisa y aplica; nada se guarda hasta que tocas «Aplicar».</p>
-      ${bj.length > 1 ? `<button class="btn primary block" type="button" data-bjall>Aplicar todo (${bj.length})</button>` : ""}
-      ${bj.map(x => `<article class="bj-item"><h3>${esc(new Date(x.creado || Date.now()).toLocaleString("es-MX", { timeZone: "America/Mexico_City", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}</h3>
+    const card = (x, acts, tag = "") => `<article class="bj-item"><h3>${esc(fdate(x.aplicado || x.creado))}${tag}</h3>
         <p class="bj-res">${esc(x.resumen || "")}</p>
         <details><summary class="sub" style="cursor:pointer">Ver detalle (${(x.ops || []).length})</summary><ul class="bj-ops">${(x.ops || []).map(opLine).join("")}</ul></details>
-        <div class="bj-acts"><button class="btn sm danger" type="button" data-bjdel="${esc(x.id)}">Descartar</button>${(x.ops || []).every(opOk) ? `<button class="btn sm primary" type="button" data-bjok="${esc(x.id)}">Aplicar</button>` : '<span class="sub" style="align-self:center">Contiene cambios no permitidos</span>'}</div></article>`).join("")}
+        <div class="bj-acts">${acts}</div></article>`;
+    const pend = bj.map(x => card(x, `<button class="btn sm danger" type="button" data-bjdel="${esc(x.id)}">Descartar</button>${(x.ops || []).every(opOk) ? `<button class="btn sm primary" type="button" data-bjok="${esc(x.id)}">Aplicar</button>` : '<span class="sub" style="align-self:center">Contiene cambios no permitidos</span>'}`, ' <span class="pill low">No viene firmado por Claude · revísalo con cuidado</span>')).join("");
+    const ESTADO = { aplicado: ["stock", "Aplicado"], deshecho: ["neutral", "Deshecho"], descartado: ["neutral", "Descartado"] };
+    const done = hist.map(x => { const e = ESTADO[x.estado] || ["neutral", x.estado]; return card(x, x.estado === "aplicado" && Array.isArray(x.deshacer) ? `<button class="btn sm ghost" type="button" data-bjundo="${esc(x.id)}">Deshacer</button>` : "", ` <span class="pill ${e[0]}">${e[1]}${x.auto ? " solo" : ""}</span>`); }).join("");
+    layer.innerHTML = `<div class="scrim" data-bjclose><div class="drawer" role="dialog" aria-modal="true" aria-label="Cambios de Claude">
+      <div class="dh"><h2>Cambios de Claude</h2><button type="button" class="x" data-bjclose aria-label="Cerrar">×</button></div>
+      <p class="sub" style="margin:0">Lo que le dictas a Claude en el chat se aplica solo al abrir la app. Si algo no te convence, tócale «Deshacer».</p>
+      ${pend ? `<h3 style="font-size:18px">Por revisar</h3>${bj.length > 1 ? `<button class="btn primary block" type="button" data-bjall>Aplicar todo (${bj.length})</button>` : ""}${pend}` : ""}
+      <h3 style="font-size:18px">Recientes</h3>${done || '<p class="sub" style="margin:0">Todavía no hay cambios.</p>'}
     </div></div>`;
   }
   function closeBj() { bjOpen = false; const l = $("#bjLayer"); if (l) l.innerHTML = ""; }
   const stamp = v => v === "__now__" ? new Date().toISOString() : v === "__uid__" ? (auth.currentUser || {}).uid || "" : v;
-  async function applyBj(x) {
+  const NONE = "__no_existia__";
+  // Aplica un paquete en una sola transacción y guarda lo necesario para deshacerlo.
+  async function applyBj(x, auto) {
     const ops = x.ops || [];
     if (!ops.length || !ops.every(opOk)) throw Object.assign(new Error("op"), { code: "op-no-permitida" });
-    const b = fs.batch(), now = new Date().toISOString(), uid = (auth.currentUser || {}).uid || "";
-    for (const o of ops) {
-      const d = {}; for (const [k, v] of Object.entries(o.data)) d[k] = stamp(v);
-      if (o.op === "add") { b.set(fs.collection(o.path).doc(), { creado: now, por: uid, ...d }); }
-      else if (o.op === "set") b.set(fs.doc(o.path), { actualizado: now, ...d }, { merge: true });
-      else b.update(fs.doc(o.path), { ...d, actualizado: now });
+    const now = new Date().toISOString(), uid = (auth.currentUser || {}).uid || "", bref = fs.doc("bandeja/" + x.id);
+    return fs.runTransaction(async tx => {
+      const cur = await tx.get(bref);
+      if (!cur.exists || cur.data().estado !== "pendiente") return false;
+      const prevs = [];
+      for (const o of ops) prevs.push(o.op === "add" ? null : await tx.get(fs.doc(o.path)));
+      const undo = [];
+      ops.forEach((o, i) => {
+        const d = {}; for (const [k, v] of Object.entries(o.data)) d[k] = stamp(v);
+        if (o.op === "add") { const r = fs.collection(o.path).doc(); tx.set(r, { creado: now, por: uid, ...d }); undo.push({ t: "del", path: r.path }); return; }
+        const pv = prevs[i];
+        if (o.op === "update" && !pv.exists) throw Object.assign(new Error("no existe " + o.path), { code: "not-found" });
+        if (!pv.exists) undo.push({ t: "del", path: o.path });
+        else { const old = pv.data(), vals = {}; for (const k of [...Object.keys(d), "actualizado"]) vals[k] = k in old ? old[k] : NONE; undo.push({ t: "restore", path: o.path, vals }); }
+        tx.set(fs.doc(o.path), { ...d, actualizado: now }, { merge: true });
+      });
+      tx.update(bref, { estado: "aplicado", aplicado: now, aplicadoPor: uid, auto: !!auto, deshacer: undo });
+      tx.delete(fs.doc("bandeja_avisos/" + x.id));
+      return true;
+    });
+  }
+  async function undoBj(id) {
+    const x = hist.find(h => h.id === id); if (!x || !Array.isArray(x.deshacer)) return;
+    const b = fs.batch(), del = firebase.firestore.FieldValue.delete();
+    for (const u of x.deshacer) {
+      if (u.t === "del") b.delete(fs.doc(u.path));
+      else { const v = {}; for (const [k, val] of Object.entries(u.vals || {})) v[k] = val === NONE ? del : val; b.set(fs.doc(u.path), v, { merge: true }); }
     }
-    b.update(fs.doc("bandeja/" + x.id), { estado: "aplicado", aplicado: now, aplicadoPor: uid });
-    b.delete(fs.doc("bandeja_avisos/" + x.id));
+    b.update(fs.doc("bandeja/" + id), { estado: "deshecho", deshecho: new Date().toISOString() });
     await b.commit();
+  }
+  async function autoApply() {
+    for (const x of bj.slice()) {
+      if (tried.has(x.id)) continue; tried.add(x.id);
+      if (!(x.ops || []).every(opOk) || !(await firmaOk(x))) continue;
+      try { if (await applyBj(x, true)) { autoN++; renderBj(); } } catch (err) { console.error("No se pudo aplicar", x.id, err); }
+    }
   }
   document.addEventListener("click", async e => {
     const t = e.target;
-    if (t.closest("[data-bjopen]")) { bjOpen = true; drawBj(); return; }
+    if (t.closest("[data-bjopen]")) { bjOpen = true; autoN = 0; renderBj(); drawBj(); return; }
     if (t.matches("[data-bjclose]")) { closeBj(); return; }
-    const ok = t.closest("[data-bjok]"), del = t.closest("[data-bjdel]"), all = t.closest("[data-bjall]");
+    const ok = t.closest("[data-bjok]"), del = t.closest("[data-bjdel]"), all = t.closest("[data-bjall]"), un = t.closest("[data-bjundo]");
     if (ok || all) {
       const list = (ok ? bj.filter(x => x.id === ok.dataset.bjok) : bj.slice()).filter(x => (x.ops || []).every(opOk));
-      (ok || all).disabled = true; let n = 0, bad = 0;
-      for (const x of list) { try { await applyBj(x); n++; } catch (err) { console.error(err); bad++; } }
+      const btn = ok || all; btn.disabled = true; let n = 0, bad = 0;
+      for (const x of list) { try { if (await applyBj(x, false)) n++; } catch (err) { console.error(err); bad++; } }
       toast(bad ? `${n} aplicados · ${bad} no se pudieron aplicar` : n === 1 ? "Cambio aplicado" : `${n} cambios aplicados`);
-      if (all || ok) { const b2 = t.closest("button"); if (b2) b2.disabled = false; }
+      btn.disabled = false; return;
+    }
+    if (un) {
+      if (!confirm("¿Deshacer este cambio? Se regresan los datos a como estaban antes de aplicarlo.")) return;
+      un.disabled = true;
+      try { await undoBj(un.dataset.bjundo); toast("Cambio deshecho"); } catch (err) { console.error(err); toast(errMsg(err)); un.disabled = false; }
       return;
     }
     if (del) {
@@ -353,12 +408,18 @@
       try { const b = fs.batch(); b.update(fs.doc("bandeja/" + del.dataset.bjdel), { estado: "descartado", aplicado: new Date().toISOString() }); b.delete(fs.doc("bandeja_avisos/" + del.dataset.bjdel)); await b.commit(); toast("Cambio descartado"); } catch (err) { toast(errMsg(err)); }
     }
   });
+  let pendAll = [];
   ready.then(() => {
     if (!FB.perfil || FB.perfil.rol !== "admin") return;
-    fs.collection("bandeja").where("estado", "==", "pendiente").limit(100).onSnapshot(s => {
-      bj = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => String(a.creado).localeCompare(String(b.creado)));
+    fs.collection("bandeja").where("estado", "==", "pendiente").limit(100).onSnapshot(async s => {
+      pendAll = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => String(a.creado).localeCompare(String(b.creado)));
+      bj = pendAll;
+      await autoApply();
+      // Lo que queda pendiente es lo que no trae firma válida: se revisa a mano.
+      bj = pendAll.filter(x => tried.has(x.id));
       renderBj();
     }, err => console.error(err));
+    fs.collection("bandeja").orderBy("aplicado", "desc").limit(15).onSnapshot(s => { hist = s.docs.map(d => ({ id: d.id, ...d.data() })); if (bjOpen) drawBj(); }, err => console.error(err));
   });
 
   /* ---------- Ajustes: importar respaldo (.zip) ---------- */

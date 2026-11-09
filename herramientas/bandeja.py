@@ -19,9 +19,10 @@ Rutas permitidas (la app rechaza cualquier otra):
   set/update -> productos/ID, existencias/ID, fin/admin/costos/ID, fin/admin/proveedores/ID,
                 fin/admin/proyectos/ID, fin/admin/empleados/ID
 Valores especiales: "__now__" (fecha y hora al aplicar), "__uid__" (quien aplica).
-Nada se guarda en los datos reales hasta que un administrador toca «Aplicar» en la app.
+Cada paquete va firmado con herramientas/clave_bandeja.pem: la app lo aplica sola al abrirla un administrador
+(y permite deshacerlo). Paquetes sin firma válida se quedan para revisión manual.
 """
-import json, sys, secrets, datetime, urllib.request
+import json, sys, os, secrets, datetime, base64, urllib.request
 
 PROJECT = "mjc-showroom"
 API_KEY = "AIzaSyBUSMqtvho-y-x4bmgNkdZ4FmtB9m9-JDk"  # clave pública de la app web (no es secreta)
@@ -36,6 +37,29 @@ def fv(v):
     if isinstance(v, list): return {"arrayValue": {"values": [fv(x) for x in v]}}
     if isinstance(v, dict): return {"mapValue": {"fields": {k: fv(x) for k, x in v.items()}}}
     raise TypeError(type(v))
+
+
+def norm(v):
+    """Números enteros como int (igual que JavaScript) para que la firma coincida."""
+    if isinstance(v, float) and v.is_integer(): return int(v)
+    if isinstance(v, list): return [norm(x) for x in v]
+    if isinstance(v, dict): return {k: norm(x) for k, x in v.items()}
+    return v
+
+
+def canon(v):
+    return json.dumps(v, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def firmar(msg):
+    """Firma ECDSA P-256 (formato r||s) con la clave privada del repositorio."""
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+    pem = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clave_bandeja.pem")
+    key = serialization.load_pem_private_key(open(pem, "rb").read(), None)
+    r_, s_ = decode_dss_signature(key.sign(msg.encode("utf-8"), ec.ECDSA(hashes.SHA256())))
+    return base64.b64encode(r_.to_bytes(32, "big") + s_.to_bytes(32, "big")).decode()
 
 
 def post(base, col, doc_id, data):
@@ -56,7 +80,9 @@ def main():
     assert pkg.get("resumen") and pkg.get("ops"), "Falta resumen u ops"
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc_id = now.replace(":", "").replace("-", "") + "-" + secrets.token_hex(3)
-    post(base, "bandeja", doc_id, {"creado": now, "resumen": pkg["resumen"], "ops": pkg["ops"], "estado": "pendiente", "origen": "claude"})
+    ops = norm(pkg["ops"])
+    firma = firmar(canon({"creado": now, "resumen": pkg["resumen"], "ops": ops}))
+    post(base, "bandeja", doc_id, {"creado": now, "resumen": pkg["resumen"], "ops": ops, "estado": "pendiente", "origen": "claude", "firma": firma})
     post(base, "bandeja_avisos", doc_id, {"creado": now})
     print("En bandeja:", doc_id)
 

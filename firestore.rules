@@ -60,7 +60,7 @@ service cloud.firestore {
     // Bandeja de cambios de Claude: se puede dejar un cambio (sin leer nada);
     // solo un administrador lo ve, lo aplica o lo descarta.
     match /bandeja/{id} {
-      allow create: if request.resource.data.keys().hasOnly(['creado', 'resumen', 'ops', 'estado', 'origen'])
+      allow create: if request.resource.data.keys().hasOnly(['creado', 'resumen', 'ops', 'estado', 'origen', 'firma'])
         && request.resource.data.estado == 'pendiente'
         && request.resource.data.resumen is string && request.resource.data.resumen.size() < 4000
         && request.resource.data.ops is list && request.resource.data.ops.size() > 0 && request.resource.data.ops.size() <= 60;
