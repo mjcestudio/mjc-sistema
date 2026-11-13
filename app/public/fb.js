@@ -301,7 +301,7 @@
     return `<li><b>${verb} ${esc((NAMES[base] || base).toLowerCase())}${id ? " " + esc(id) : ""}</b> — ${esc(fields)}${opOk(o) ? "" : ' <span class="pill out">No permitido</span>'}</li>`;
   }
   // Llave pública: solo los paquetes firmados por Claude (con su llave privada) se aplican solos.
-  const BJ_JWK = { kty: "EC", crv: "P-256", x: "Wrk-YJiifHjtiVBldG5_8IBK7qSP0bViBTo9vR0erNI", y: "YImxbZ10dWSkXmmjbxcw7MMDGDnXT0cSmo_or6ZyPCs", ext: true };
+  const BJ_JWK = { kty: "EC", crv: "P-256", x: "hV2AFbceO9w7RHSG9qolw590WPikB6LnJLTpMUJ2x8w", y: "d1FEZXl_agGRQSgAGEbZt85gKJlsYX5nmoE3GWUc57M", ext: true };
   let bjKey = null, hist = [], autoN = 0;
   const tried = new Set();
   const canon = v => Array.isArray(v) ? "[" + v.map(canon).join(",") + "]" : v && typeof v === "object" ? "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}" : JSON.stringify(v);
